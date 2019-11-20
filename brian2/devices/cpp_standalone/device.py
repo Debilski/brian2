@@ -20,7 +20,7 @@ from past.builtins import basestring
 
 import brian2
 from brian2.codegen.codeobject import check_compiler_kwds
-from brian2.codegen.cpp_prefs import get_compiler_and_args
+from brian2.codegen.cpp_prefs import get_compiler_and_args, get_msvc_env
 from brian2.core.network import Network
 from brian2.devices.device import Device, all_devices, set_device, reset_device
 from brian2.core.functions import Function
@@ -929,49 +929,16 @@ class CPPStandaloneDevice(Device):
         self.net_synapses = synapses
     
     def compile_source(self, directory, compiler, debug, clean):
-        from setuptools import msvc
-        import distutils
         num_threads = prefs.devices.cpp_standalone.openmp_threads
         with in_directory(directory):
             if compiler == 'msvc':
-                # TODO: copy vcvars and make replacements for 64 bit automatically
-                arch_name = prefs['codegen.cpp.msvc_architecture']
-                if arch_name == '':
-                    bits = struct.calcsize('P') * 8
-                    if bits == 64:
-                        arch_name = 'x86_amd64'
-                    else:
-                        arch_name = 'x86'
-                vcvars_loc = prefs['codegen.cpp.msvc_vars_location']
-                if vcvars_loc == '':
-                    msvc_env = CPPStandaloneDevice.msvc_env
-                    if msvc_env is None:
-                        try:
-                            msvc_env = msvc.msvc14_get_vc_env(arch_name)
-                            # Cache the result
-                            CPPStandaloneDevice.msvc_env = msvc_env
-                        except distutils.errors.DistutilsPlatformError:
-                            # Use the old way of searching for MSVC
-                            # FIXME: Remove this when we remove Python 2 support
-                            #        and require Visual Studio 2015?
-                            for version in range(16, 8, -1):
-                                fname = msvc.msvc9_find_vcvarsall(version)
-                                if fname:
-                                    vcvars_loc = fname
-                                    break
-                            if vcvars_loc == '':
-                                raise IOError("Cannot find Microsoft Visual Studio, You "
-                                              "can try to set the path to vcvarsall.bat "
-                                              "via the codegen.cpp.msvc_vars_location "
-                                              "preference explicitly.")
-                if vcvars_loc:
-                    vcvars_cmd = '"{vcvars_loc}" {arch_name}'.format(
-                            vcvars_loc=vcvars_loc, arch_name=arch_name)
+
+                msvc_env, vcvars_cmd = get_msvc_env()
                 make_cmd = 'nmake /f win_makefile'
                 make_args = ' '.join(prefs.devices.cpp_standalone.extra_make_args_windows)
                 if os.path.exists('winmake.log'):
                     os.remove('winmake.log')
-                if vcvars_loc:
+                if vcvars_cmd:
                     with open('winmake.log', 'w') as f:
                         f.write(vcvars_cmd + '\n')
                 else:
@@ -980,7 +947,7 @@ class CPPStandaloneDevice(Device):
                         for key, value in msvc_env.items():
                             f.write('{}={}\n'.format(key, value))
                 with std_silent(debug):
-                    if vcvars_loc:
+                    if vcvars_cmd:
                         if clean:
                             os.system('%s >>winmake.log 2>&1 && %s clean > NUL 2>&1' % (vcvars_cmd, make_cmd))
                         x = os.system('%s >>winmake.log 2>&1 && %s %s>>winmake.log 2>&1' % (vcvars_cmd,
